@@ -1,0 +1,58 @@
+*** kernel.spec.orig	2017-09-26 12:44:49.741505341 +0300
+--- kernel.spec	2017-09-26 12:48:14.690513042 +0300
+***************
+*** 503,508 ****
+--- 503,518 ----
+  %endif
+  %endif
+  
++ # AUFS4 sources and patches
++ %define with_aufs4_module  %{?_with_aufs_module: 1} %{?!_with_aufs_module: 0}
++ Source6000: aufs4-kbuild.patch
++ Source6001: aufs4-base.patch
++ Source6002: aufs4-mmap.patch
++ Source6003: aufs4-standalone.patch
++ Source6010: aufs4-sources.tar.gz
++ Source6011: aufs4.config
++ Source6012: aufs4-module.config
++ 
+  ## Patches needed for building this package
+  
+  # build tweak for build ID magic, even for -vanilla
+***************
+*** 1307,1314 ****
+--- 1317,1334 ----
+  
+  git am %{patches}
+  
++ # Apply AUFS4 patches, copy documentation and sources.
++ patch -p1 < %{SOURCE6000}
++ patch -p1 < %{SOURCE6001}
++ patch -p1 < %{SOURCE6002}
++ %if %{with_aufs4_module}
++   patch -p1 < %{SOURCE6003}
++ %endif
++ tar -xvzf %{SOURCE6010}
++ 
+  # END OF PATCH APPLICATIONS
+  
++ 
+  # Any further pre-build tree manipulations happen here.
+  
+  chmod +x scripts/checkpatch.pl
+***************
+*** 1341,1346 ****
+--- 1361,1373 ----
+  # now run oldconfig over all the config files
+  for i in *.config
+  do
++ %if %{with_aufs4_module}
++   echo "Appending AUFS4 (as module) config to $i..."
++   cat %{SOURCE6012} >> $i
++ %else
++   echo "Appending AUFS4 config to $i..."
++   cat %{SOURCE6011} >> $i
++ %endif
+    cat $i > temp-$i
+    mv $i .config
+    Arch=`head -1 .config | cut -b 3-`
