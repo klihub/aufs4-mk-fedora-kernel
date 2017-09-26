@@ -92,7 +92,15 @@ patch_kernel_spec () {
     echo "Patching the kernel SPEC for AUFS4 support..."
 
     cd $SPEC_DIR
-    patch -p0 < $SRC_DIR/$AUFS_SPEC_PATCH
+    for v in kernel-$KERNEL_RELEASE \
+             kernel-$KERNEL_VERSION \
+             kernel-${KERNEL_VERSION%-*} \
+             kernel; do
+        if [ -f $SRC_DIR/$v-spec.patch ]; then
+            patch -p0 < $SRC_DIR/$v-spec.patch
+            break
+        fi
+    done
     mv kernel.spec kernel.spec.in
     cat kernel.spec.in | \
       sed 's/^%global fedora_build.*$/%global fedora_build %{baserelease}+aufs/'\
