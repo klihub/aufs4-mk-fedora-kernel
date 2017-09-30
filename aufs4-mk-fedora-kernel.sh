@@ -25,53 +25,95 @@ AUFS_SPEC_PATCH="kernel-spec.patch"
 # copy_aufs_extras
 # build_kernel_rpm
 
-# detect kernel, source rpm, aufs4 versions
-setup () {
-    FEDORA_RELEASE=$(cat /etc/fedora-release | cut -d ' ' -f 3)
-    ARCH=$(uname -m)
-    KERNEL=$(uname -r)
-    KERNEL_RELEASE=${KERNEL%.${MACHINE}}
-    KERNEL_RELEASE=${KERNEL_RELEASE%.fc[0-9]*}
-    KERNEL_SRPM=kernel-$KERNEL_RELEASE.fc$FEDORA_RELEASE.src.rpm
-    KERNEL_VERSION=${KERNEL_RELEASE%-*}
-    KERNEL_BASERELEASE=${KERNEL_RELEASE#*-}
-    AUFS_VERSION=${KERNEL_VERSION%.*}
+# Print an informational progress message.
+_P=0
+progress () {
+    echo "[$_P] $*"
+    _P=$(($_P + 1))
+}
 
-    echo "Detected configuration:"
-    echo "  SRC_DIR: $SRC_DIR"
-    echo "  ARCH: $ARCH"
-    echo "  KERNEL: $KERNEL"
-    echo "  KERNEL_RELEASE: $KERNEL_RELEASE"
-    echo "  KERNEL_SRPM: $KERNEL_SRPM"
-    echo "  KERNEL_VERSION: $KERNEL_VERSION"
-    echo "  KERNEL_BASERELEASE: $KERNEL_BASERELEASE"
-    echo "  AUFS_VERSION: $AUFS_VERSION"
-    sleep 5
+info () {
+    echo "I: $*"
+}
+
+# Print a warning message.
+warn () {
+    echo "W: $*" 1>&2
+}
+
+# Print an error message.
+error () {
+    echo "E: $*" 1>&2
+}
+
+# Print an error message and exit.
+fatal () {
+    echo "fatal error: $*" 1>&2
+    exit 1
+}
+
+# Refresh package database.
+fetch_update_info () {
+    progress "Fetching info about available DNF/RPM updates..."
+    sudo dnf updateinfo # --refresh
+}
+
+# latest_kernel_version
+latest_kernel_srpm () {
+    KERNEL_SRPM=$(sudo dnf info kernel | sed 's/ *: */:/g' |
+                         grep ^Source: | cut -d ':' -f2 | sort | tail -1)
 }
 
 # fetch the kernel source RPM
 fetch_kernel_srpm () {
     if [ ! -f $KERNEL_SRPM ]; then
-        echo "Fetching $KERNEL_SRPM..."
+        progress "Fetching $KERNEL_SRPM..."
         dnf download --source kernel
     else
-        echo "Using existing $KERNEL_SRPM..."
+        info "Using existing $KERNEL_SRPM..."
     fi
+}
+
+# detect kernel, source rpm, aufs4 versions
+setup () {
+    FEDORA_RELEASE=$(cat /etc/fedora-release | cut -d ' ' -f 3)
+    ARCH=$(uname -m)
+    KERNEL_VERSION=${KERNEL_SRPM#kernel-}
+    KERNEL_VERSION=${KERNEL_VERSION%.fc[0-9]*.src.rpm}
+    KERNEL_VANILLA=${KERNEL_VERSION%-*}
+    AUFS_VERSION=${KERNEL_VERSION%.*}
+    KERNEL_RUNNING=$(uname -r | sed 's/.fc[0-9].*$//')
+    
+    info "Detected configuration:"
+    info "  SRC_DIR: $SRC_DIR"
+    info "  ARCH: $ARCH"
+    info "  KERNEL_VERSION: $KERNEL_VERSION"
+    info "  KERNEL_VANILLA: $KERNEL_VANILLA"
+    info "  KERNEL_SRPM: $KERNEL_SRPM"
+    info "  AUFS_VERSION: $AUFS_VERSION"
+    info "  KERNEL_RUNNING: $KERNEL_RUNNING"
+
+    if [ "$KERNEL_VERSION" != "$KERNEL_RUNNING" -a \
+         "$KERNEL_VERSION" != "$KERNEL_RUNNING+aufs" ]; then
+        warn "Running ($KERNEL_RUNNING) is not the latest ($KERNEL_VERSION)."
+        warn "Will build aufs-enabled $KERNEL_VERSION..."
+    fi
+    sleep 5
 }
 
 # extract the kernel source rpm
 extract_kernel_srpm () {
-    echo "Extracting $KERNEL_SRPM..."
+    progress "Extracting $KERNEL_SRPM..."
     rpm -ivh $KERNEL_SRPM
 }
 
 # clone aufs4
 clone_aufs () {
     if [ ! -d $AUFS_DIR ]; then
-        echo "Cloning AUFS4 repo $AUFS_$REPO..."
+        progress "Cloning AUFS4 repo $AUFS_$REPO..."
         git clone $AUFS_REPO
      else
-        echo "Pulling from AUFS4 repo $AUFS_$REPO..."
+        progress "Pulling from AUFS4 repo $AUFS_$REPO..."
         cd $AUFS_DIR
         git pull
         cd -
@@ -80,7 +122,7 @@ clone_aufs () {
 
 # checkout the right aufs version
 checkout_aufs () {
-    echo "$Checking out version $AUFS_VERSION of AUFS4..."
+    progress "$Checking out version $AUFS_VERSION of AUFS4..."
     cd $AUFS_DIR
     git checkout aufs$AUFS_VERSION
     tar -cvzf $AUFS_TARBALL $AUFS_SOURCES
@@ -89,12 +131,11 @@ checkout_aufs () {
 
 # patch the kernel spec file for aufs support
 patch_kernel_spec () {
-    echo "Patching the kernel SPEC for AUFS4 support..."
+    progress "Patching the kernel SPEC for AUFS4 support..."
 
     cd $SPEC_DIR
-    for v in kernel-$KERNEL_RELEASE \
-             kernel-$KERNEL_VERSION \
-             kernel-${KERNEL_VERSION%-*} \
+    for v in kernel-$KERNEL_VERSION \
+             kernel-$KERNEL_VANILLA \
              kernel; do
         if [ -f $SRC_DIR/$v-spec.patch ]; then
             patch -p0 < $SRC_DIR/$v-spec.patch
@@ -110,7 +151,7 @@ patch_kernel_spec () {
 
 # copy in the missing aufs4 and our bits
 patch_and_copy_aufs () {
-    echo "Copying external AUFS4 source and config bits..."
+    progress "Copying external AUFS4 source and config bits..."
 
     for p in $AUFS_PATCHES; do
         cp $AUFS_DIR/aufs4-$p.patch $SOURCE_DIR
@@ -124,7 +165,7 @@ patch_and_copy_aufs () {
 
 # rebuild the kernel rpm
 rebuild_kernel_rpm () {
-    echo "Rebuilding the kernel RPM..."
+    progress "Rebuilding the kernel RPM..."
     rpmbuild -bb $SPEC_DIR/kernel.spec --without debug --without debuginfo
 }
 
@@ -132,8 +173,10 @@ rebuild_kernel_rpm () {
 #########################
 # main script
 
-set -e -o pipefail
+set -e
 
+fetch_update_info
+latest_kernel_srpm
 setup
 fetch_kernel_srpm
 clone_aufs
