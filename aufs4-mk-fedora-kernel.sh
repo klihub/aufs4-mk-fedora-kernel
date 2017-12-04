@@ -54,23 +54,31 @@ fatal () {
 
 # Refresh package database.
 fetch_update_info () {
-    progress "Fetching info about available DNF/RPM updates..."
-    sudo dnf updateinfo # --refresh
+    if [ -z "$NO_FETCH" ]; then
+        progress "Fetching info about available DNF/RPM updates..."
+        sudo dnf $DNF_RELEASE updateinfo # --refresh
+    fi
 }
 
 # latest_kernel_version
 latest_kernel_srpm () {
-    KERNEL_SRPM=$(sudo dnf info kernel | sed 's/ *: */:/g' |
-                         grep ^Source: | cut -d ':' -f2 | sort | tail -1)
+    if [ -z "$KERNEL_VERSION" ]; then
+        KERNEL_SRPM=$(sudo dnf $DNF_RELEASE info kernel | sed 's/ *: */:/g' |
+                             grep ^Source: | cut -d ':' -f2 | tail -1)
+    else
+        KERNEL_SRPM=kernel-$KERNEL_VERSION.$FEDORA_VERSION.src.rpm
+    fi
 }
 
 # fetch the kernel source RPM
 fetch_kernel_srpm () {
-    if [ ! -f $KERNEL_SRPM ]; then
-        progress "Fetching $KERNEL_SRPM..."
-        dnf download --source kernel
-    else
-        info "Using existing $KERNEL_SRPM..."
+    if [ -z "$NO_FETCH" ]; then
+        if [ ! -f $KERNEL_SRPM ]; then
+            progress "Fetching $KERNEL_SRPM..."
+            dnf $DNF_RELEASE download --source kernel
+        else
+            info "Using existing $KERNEL_SRPM..."
+        fi
     fi
 }
 
@@ -113,10 +121,12 @@ clone_aufs () {
         progress "Cloning AUFS4 repo $AUFS_$REPO..."
         git clone $AUFS_REPO
      else
-        progress "Pulling from AUFS4 repo $AUFS_$REPO..."
-        cd $AUFS_DIR
-        git pull
-        cd -
+        if [ -z "$NO_PULL" ]; then
+            progress "Pulling from AUFS4 repo $AUFS_$REPO..."
+            cd $AUFS_DIR
+            git pull
+            cd -
+        fi
     fi
 }
 
@@ -163,18 +173,93 @@ patch_and_copy_aufs () {
     cp $AUFS_DIR/$AUFS_TARBALL $SOURCE_DIR
 }
 
+# Put any necessary finishing touches on the kernel spec file
+finalize_kernel_spec () {
+    progress "Finalizing kernel.spec..."
+    sed -i "s/ listnewconfig_fail 1/ listnewconfig_fail 0/" \
+        ~/rpmbuild/SPECS/kernel.spec
+}
+
 # rebuild the kernel rpm
 rebuild_kernel_rpm () {
     progress "Rebuilding the kernel RPM..."
-    rpmbuild -bb $SPEC_DIR/kernel.spec --without debug --without debuginfo
+    rpmbuild -bb $SPEC_DIR/kernel.spec \
+        --without debug --without debuginfo \
+        --define "listnewconfig_fail $LISTNEWCONFIG_FAIL" 
 }
 
+# build a source rpm of the kernel
+build_kernel_srpm () {
+    if [ -z "$NO_SRPM" ]; then
+        progress "Build kernel source RPM..."
+        rpmbuild -bs $SPEC_DIR/kernel.spec
+    fi
+}
+
+# print ehlp on usage
+print_usage () {
+    local _msg="$*"
+
+    if [ -n "$_msg" ]; then
+        echo "error: $_msg"
+    fi
+
+    cat <<EOF
+$0 [options], where the possible options are:
+
+    --debug             extra verbose execution of this script (shell set -x)
+    --kernel <version>  patch and compile the given kernel version
+    --fedora <version>  use the repos for the given fedora version
+    --dont-fetch        don't fetch DNF updates or the kernel source rpm
+    --dont-pull         don't pull git repos before compiling
+    --local             equals --dont-fetch --dont-pull
+    --relaxed           force listnewconfig_fail to 0
+    --no-srpm           don't build a final source RPM
+    --help              print this help message
+EOF
+
+    if [ -n "$_msg" ]; then
+        exit 1
+    else
+        exit 0
+    fi
+}
+
+# parse the command line for options
+parse_cmdline () {
+    while [ -n "$1" ]; do
+        case $1 in
+            --debug|-d) set -x; shift 1;;
+            --kernel|-K) KERNEL_VERSION=$2; shift 2;;
+            --fedora|-F) FEDORA_VERSION=$2; shift 2;;
+            --dont-fetch|--no-fetch) NO_FETCH=1; shift 1;;
+            --dont-pull|--no-pull) NO_PULL=1; shift 1;;
+            --local) NO_PULL=1; NO_FETCH=1; shift 1;;
+            --relaxed|-r) LISTNEWCONFIG_FAIL=0; shift 1;;
+            --no-srpm) NO_SRPM=1; shift 1;;
+            --help|-h) print_usage "";;
+            *)
+              print_usage "unknown option $1"
+              ;;
+        esac
+    done
+
+    if [ -z "$FEDORA_VERSION" ]; then
+        version_id=$(cat /etc/os-release | grep VERSION_ID | cut -d '=' -f2)
+        FEDORA_VERSION=$version_id
+    fi
+
+    DNF_RELEASE="--releasever $FEDORA_VERSION"
+}
 
 #########################
 # main script
 
+LISTNEWCONFIG_FAIL=1
+
 set -e
 
+parse_cmdline $*
 fetch_update_info
 latest_kernel_srpm
 setup
@@ -184,5 +269,7 @@ extract_kernel_srpm
 checkout_aufs
 patch_kernel_spec
 patch_and_copy_aufs
+finalize_kernel_spec
 rebuild_kernel_rpm
+build_kernel_srpm
 
