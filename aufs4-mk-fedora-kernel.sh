@@ -176,7 +176,9 @@ patch_and_copy_aufs () {
 # Put any necessary finishing touches on the kernel spec file
 finalize_kernel_spec () {
     progress "Finalizing kernel.spec..."
-    sed -i "s/ listnewconfig_fail 1/ listnewconfig_fail 0/" \
+    sed -i "s/ listnewconfig_fail 1/ listnewconfig_fail $NEWCFG_FAIL/" \
+        ~/rpmbuild/SPECS/kernel.spec
+    sed -i "s/ configmismatch_fail 1/ configmismatch_fail $CFGMISMATCH_FAIL/" \
         ~/rpmbuild/SPECS/kernel.spec
 }
 
@@ -213,7 +215,8 @@ $0 [options], where the possible options are:
     --dont-fetch        don't fetch DNF updates or the kernel source rpm
     --dont-pull         don't pull git repos before compiling
     --local             equals --dont-fetch --dont-pull
-    --relaxed           force listnewconfig_fail to 0
+    --relaxed, -r       force listnewconfig_fail and configmismatch_fail to 0
+    --relaxed, -r       if given twice, force configmismatch_fail to 0
     --no-srpm           don't build a final source RPM
     --help              print this help message
 EOF
@@ -235,7 +238,14 @@ parse_cmdline () {
             --dont-fetch|--no-fetch) NO_FETCH=1; shift 1;;
             --dont-pull|--no-pull) NO_PULL=1; shift 1;;
             --local) NO_PULL=1; NO_FETCH=1; shift 1;;
-            --relaxed|-r) LISTNEWCONFIG_FAIL=0; shift 1;;
+            --relaxed|-r)
+                if [ "$NEWCFG_FAIL" != "0" ]; then
+                    NEWCFG_FAIL=0
+                else
+                    CFGMISMATCH_FAIL=0
+                fi
+                shift 1
+                ;;
             --no-srpm) NO_SRPM=1; shift 1;;
             --help|-h) print_usage "";;
             *)
@@ -255,7 +265,8 @@ parse_cmdline () {
 #########################
 # main script
 
-LISTNEWCONFIG_FAIL=1
+NEWCFG_FAIL=1
+CFGMISMATCH_FAIL=1
 
 set -e
 
