@@ -144,6 +144,7 @@ patch_kernel_spec () {
     progress "Patching the kernel SPEC for AUFS4 support..."
 
     cd $SPEC_DIR
+    cp kernel.spec kernel.spec.orig
     for v in kernel-$KERNEL_VERSION \
              kernel-$KERNEL_VANILLA \
              kernel; do
@@ -185,9 +186,11 @@ finalize_kernel_spec () {
 # rebuild the kernel rpm
 rebuild_kernel_rpm () {
     progress "Rebuilding the kernel RPM..."
+#    rpmbuild -bb $SPEC_DIR/kernel.spec \
+#        --define "listnewconfig_fail $NEWCFG_FAIL"
     rpmbuild -bb $SPEC_DIR/kernel.spec \
         --without debug --without debuginfo \
-        --define "listnewconfig_fail $LISTNEWCONFIG_FAIL" 
+        --define "listnewconfig_fail $NEWCFG_FAIL"
 }
 
 # build a source rpm of the kernel
